@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "terrain": {"enabled": true, "exaggeration": 1, "shade": 0.35},
+  "buildings": {"enabled": true, "lowColor": "#d5ddd6", "highColor": "#12544f", "opacity": 0.97},
+  "farmland": {"color": "#d4c397", "opacity": 0.65, "pattern": "rows", "patternColor": "#795b2d", "patternSpacing": 8, "boundaryColor": "#9c8757"},
+  "forest": {"color": "#a8c68a", "trees": true, "shape": "cone", "crownColor": "#49774a", "trunkColor": "#766048", "heightScale": 1, "widthScale": 1, "density": 1, "maxTrees": 1800, "minZoom": 14}
+}
