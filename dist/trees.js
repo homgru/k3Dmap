@@ -6,7 +6,7 @@ export function addTrees(map){
  let dirty=true,timer,origin,scale=1,renderer,camera,scene,trunk,crown;
  const enabled=()=>document.getElementById('landcover').checked&&Cartography.config.forest.trees&&map.getZoom()>=Cartography.config.forest.minZoom;
  const update=()=>{dirty=false;if(!enabled()){trunk.count=crown.count=0;return}
- const cfg=Cartography.config.forest;const STEP=0.0000015/Math.sqrt(cfg.density);
+ const cfg=treeConfig();const STEP=0.0000015/Math.sqrt(cfg.density);
  const center=maplibregl.MercatorCoordinate.fromLngLat(map.getCenter());origin=center;scale=center.meterInMercatorCoordinateUnits();
  const polygons=[];for(const f of map.querySourceFeatures('openmaptiles',{sourceLayer:'landcover',filter:['==','class','wood']})){const ps=f.geometry.type==='Polygon'?[f.geometry.coordinates]:f.geometry.type==='MultiPolygon'?f.geometry.coordinates:[];for(const rings of ps){let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;for(const p of rings[0]){minX=Math.min(minX,p[0]);minY=Math.min(minY,p[1]);maxX=Math.max(maxX,p[0]);maxY=Math.max(maxY,p[1])}polygons.push({rings,minX,minY,maxX,maxY})}}
  const candidates=[];const cx=Math.floor(center.x/STEP),cy=Math.floor(center.y/STEP);for(let x=cx-40;x<=cx+40;x++)for(let y=cy-40;y<=cy+40;y++){const mx=(x+.2+.6*noise(x,y))*STEP,my=(y+.2+.6*noise(y,x))*STEP;candidates.push({x,y,mx,my,d:(mx-center.x)**2+(my-center.y)**2})}candidates.sort((a,b)=>a.d-b.d);
@@ -18,8 +18,8 @@ export function addTrees(map){
  }
  trunk.count=crown.count=count;trunk.instanceMatrix.needsUpdate=crown.instanceMatrix.needsUpdate=true;if(crown.instanceColor)crown.instanceColor.needsUpdate=true;
  };
- let currentShape;
- const configure=()=>{const cfg=Cartography.config.forest;trunk.material.color.set(cfg.trunkColor);if(currentShape!==cfg.shape){const g=cfg.shape==='round'?new THREE.SphereGeometry(4.5,8,6):new THREE.ConeGeometry(4.5,10,7);if(cfg.shape==='cone')g.rotateX(Math.PI/2);g.translate(0,0,8);crown.geometry.dispose();crown.geometry=g;currentShape=cfg.shape}schedule()};
+ let currentShape;const treeConfig=()=>Cartography.config.appearance.mode==='miniature'?{...Cartography.config.forest,shape:'round',crownColor:'#7fa573',widthScale:Cartography.config.forest.widthScale*1.2}:Cartography.config.forest;
+ const configure=()=>{const cfg=treeConfig();trunk.material.color.set(cfg.trunkColor);if(currentShape!==cfg.shape){const g=cfg.shape==='round'?new THREE.SphereGeometry(4.5,8,6):new THREE.ConeGeometry(4.5,10,7);if(cfg.shape==='cone')g.rotateX(Math.PI/2);g.translate(0,0,8);crown.geometry.dispose();crown.geometry=g;currentShape=cfg.shape}schedule()};
  const schedule=()=>{dirty=true;clearTimeout(timer);timer=setTimeout(()=>map.triggerRepaint(),180)};
  const layer={id:'forest-trees',type:'custom',renderingMode:'3d',onAdd(m,gl){scene=new THREE.Scene();camera=new THREE.Camera();scene.add(new THREE.AmbientLight(0xffffff,2));const sun=new THREE.DirectionalLight(0xffffff,2);sun.position.set(-100,-100,200);scene.add(sun);
  const stem=new THREE.CylinderGeometry(.65,.9,4,5);stem.rotateX(Math.PI/2);stem.translate(0,0,2);const canopy=new THREE.ConeGeometry(4.5,10,7);canopy.rotateX(Math.PI/2);canopy.translate(0,0,8);
