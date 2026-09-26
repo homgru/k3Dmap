@@ -151,18 +151,46 @@ def load_cache():
         return {}
 
 
-def geocode(address, cache):
-    query = urllib.parse.urlencode({"q": address + ", 대한민국", "format": "jsonv2", "limit": 1, "countrycodes": "kr"})
-    try:
-        results = get_json(NOMINATIM + "?" + query, {"Accept-Language": "ko"})
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        print(f"지오코딩 실패(건너뜀): {error}", file=sys.stderr)
+def geocode_queries(address, fallback_address):
+    full = re.sub(r"\s+", " ", address).strip()
+    simplified = re.sub(r"\s+\d+(?:-\d+)?\s*(?:동|층|호)\b.*$", "", full)
+    simplified = re.sub(
+        r"\s+(?:아파트|오피스텔|근린생활시설|상가|업무시설|토지|건물).*$", "", simplified
+    ).strip()
+    queries = [(full, "address")]
+    if simplified and simplified != full:
+        queries.append((simplified, "address"))
+    if fallback_address:
+        fallback = re.sub(r"\s+", " ", fallback_address).strip()
+        if fallback and fallback not in {query for query, _ in queries}:
+            queries.append((fallback, "neighborhood"))
+    return queries
+
+
+def geocode(address, fallback_address, request_budget):
+    queries = geocode_queries(address, fallback_address)
+    requests_made = 0
+    for query_text, precision in queries[:request_budget]:
+        query = urllib.parse.urlencode({
+            "q": query_text + ", 대한민국",
+            "format": "jsonv2",
+            "limit": 1,
+            "countrycodes": "kr",
+        })
+        try:
+            results = get_json(NOMINATIM + "?" + query, {"Accept-Language": "ko"})
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, RuntimeError) as error:
+            print(f"지오코딩 요청 실패(건너뜀): {type(error).__name__}", file=sys.stderr)
+            return None, requests_made + 1
+        requests_made += 1
+        if results:
+            time.sleep(1.05)
+            return {
+                "coordinates": [float(results[0]["lon"]), float(results[0]["lat"])],
+                "precision": precision,
+            }, requests_made
         time.sleep(1.05)
-        return None
-    time.sleep(1.05)
-    if not results:
-        return None
-    return [float(results[0]["lon"]), float(results[0]["lat"])]
+    return None, requests_made
 
 
 def main(region=None):
@@ -181,15 +209,30 @@ def main(region=None):
         cached = cache.get(address)
         if isinstance(cached, list):
             coords = cached
+            precision = "address"
+        elif isinstance(cached, dict) and isinstance(cached.get("coordinates"), list):
+            coords = cached["coordinates"]
+            precision = cached.get("precision", "address")
         elif isinstance(cached, dict) and cached.get("retryAfter", "") > today:
             coords = []
+            precision = "unknown"
         else:
             coords = None
+            precision = "unknown"
         if coords is None and new_geocodes < MAX_NEW_GEOCODES:
-            coords = geocode(address, cache)
-            new_geocodes += 1
-            if coords is not None:
-                cache[address] = coords or {
+            fallback = " ".join(str(item.get(field) or "").strip() for field in (
+                "lctnSdnm", "lctnSggnm", "lctnEmdNm"
+            )).strip()
+            result, requests_made = geocode(
+                address, fallback, MAX_NEW_GEOCODES - new_geocodes
+            )
+            new_geocodes += requests_made
+            if result:
+                cache[address] = result
+                coords = result["coordinates"]
+                precision = result["precision"]
+            else:
+                cache[address] = {
                     "retryAfter": (dt.date.fromisoformat(today) + dt.timedelta(days=30)).isoformat()
                 }
         if not coords:
@@ -209,6 +252,7 @@ def main(region=None):
                 "id": str(item.get("cltrMngNo")),
                 "type": item.get("cltrUsgSclsCtgrNm") or item.get("cltrUsgMclsCtgrNm") or item.get("cltrUsgLclsCtgrNm") or "부동산",
                 "address": item["_address"],
+                "locationPrecision": precision,
                 "appraisalPrice": appraisal,
                 "minimumPrice": minimum,
                 "priceRatio": ratio if ratio is not None else "비공개",
@@ -228,7 +272,13 @@ def main(region=None):
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(json.dumps({"type": "FeatureCollection", "metadata": {"source": "한국자산관리공사 온비드", "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "itemCount": len(features), "apiRowsRead": len(records)}, "features": features}, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
     CACHE.write_text(json.dumps(cache, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
-    print(f"온비드 조회 물건 {len(records)}개, 좌표 포함 {len(features)}개; 신규 주소좌표 {new_geocodes}개 처리")
+    precise = sum(1 for feature in features if feature["properties"]["locationPrecision"] == "address")
+    approximate = len(features) - precise
+    print(
+        f"온비드 조회 물건 {len(records)}개, 좌표 포함 {len(features)}개 "
+        f"(주소 좌표 {precise}개, 읍면동 근사 좌표 {approximate}개); "
+        f"신규 지오코딩 요청 {new_geocodes}건 처리"
+    )
 
 
 if __name__ == "__main__":
