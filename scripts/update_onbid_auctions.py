@@ -21,12 +21,44 @@ PAGE_SIZE = 100
 MAX_PAGES = 40  # Daily job stays well below the API's default 1,000-call quota.
 MAX_NEW_GEOCODES = 300  # Nominatim fair-use limit: at most one request per second.
 UA = "k3Dmap-onbid-batch/1.0 (https://github.com/homgru/k3Dmap)"
+REQUEST_TIMEOUT = 60
+REQUEST_ATTEMPTS = 3
 
 
 def get_json(url, headers=None):
     request = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
-    with urllib.request.urlopen(request, timeout=35) as response:
-        return json.loads(response.read().decode("utf-8"))
+    for attempt in range(1, REQUEST_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            # Retry transient throttling/server failures, but fail fast on invalid
+            # API parameters or credentials. Never print the request URL because
+            # it contains the service key.
+            if error.code not in (429, 500, 502, 503, 504):
+                raise RuntimeError(f"데이터 API 요청 실패 (HTTP {error.code})") from None
+            if attempt == REQUEST_ATTEMPTS:
+                raise RuntimeError(
+                    f"데이터 API 일시 오류가 {REQUEST_ATTEMPTS}회 반복됨 (HTTP {error.code})"
+                ) from None
+            print(
+                f"데이터 API 일시 오류 (HTTP {error.code}); "
+                f"{attempt}/{REQUEST_ATTEMPTS - 1}회 재시도 대기",
+                file=sys.stderr,
+            )
+            error.close()
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            if attempt == REQUEST_ATTEMPTS:
+                raise RuntimeError(
+                    f"데이터 API 연결 실패: {type(error).__name__}, "
+                    f"{REQUEST_ATTEMPTS}회 시도 후 중단"
+                ) from None
+            print(
+                f"데이터 API 연결이 지연됨 ({type(error).__name__}); "
+                f"{attempt}/{REQUEST_ATTEMPTS - 1}회 재시도 대기",
+                file=sys.stderr,
+            )
+        time.sleep(2 ** attempt)
 
 
 def items_from(payload):
