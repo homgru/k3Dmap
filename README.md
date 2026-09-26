@@ -75,7 +75,7 @@ MapLibre가 화면에 필요한 지도·고도 타일을 요청하고 캐시합�
 ### 배치 수집 사용 설정
 
 1. GitHub 저장소의 **Settings → Secrets and variables → Actions → New repository secret**에서 이름을 `ONBID_SERVICE_KEY`로 하고 공공데이터포털 일반 인증키를 저장합니다.
-2. **Actions → Refresh Onbid auction data → Run workflow**로 첫 수집을 실행합니다. 이후 매일 한국시간 07:17에 자동 실행됩니다.
+2. **Actions → Refresh Onbid auction data → Run workflow**에서 첫 수집을 실행합니다. 특정 시도만 채우려면 `region`에 `서울특별시`를 입력합니다. 비워 두면 전국을 조회하며, 이후 매일 한국시간 07:17 자동 실행은 전국 기준입니다.
 3. 수집 성공 시 `dist/onbid-auctions.geojson`과 `data/onbid-geocode-cache.json`이 갱신됩니다. 지도는 공개 GeoJSON 파일을 읽으므로 사이트를 다시 배포하지 않아도 다음 새로고침부터 최신 데이터가 보입니다.
 
 수집기는 실행당 최대 40페이지(페이지당 100건)를 요청해 사용량을 제한합니다. 활용가이드의 재산유형 복수 선택, 온라인 입찰, 매각 조건을 사용해 목록을 조회하고, 유효한 180일 이내 일정만 남깁니다. `cltrMngNo` 기준으로 회차 중복을 합치며 진행 중 입찰을 우선 표시합니다. `2999`년으로 제공되는 무기한 일정은 제외합니다. 온비드 목록에는 좌표 대신 주소가 있어 Nominatim 주소 검색으로 좌표를 보완하고, 결과는 캐시에 보관합니다. Nominatim 사용량 제한을 지키기 위해 신규 주소는 실행당 최대 300건, 초당 1건 이하로 처리합니다. 주소를 찾지 못했거나 해당 실행의 신규 처리 상한을 넘긴 물건은 좌표가 생길 때까지 지도에 표시되지 않을 수 있습니다.

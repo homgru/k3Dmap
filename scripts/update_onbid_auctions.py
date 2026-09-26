@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a cached GeoJSON snapshot from the official Onbid API."""
 import datetime as dt
+import argparse
 import json
 import os
 import pathlib
@@ -36,7 +37,7 @@ def items_from(payload):
     return items or []
 
 
-def fetch_onbid(key):
+def fetch_onbid(key, region=None):
     found = []
     for page in range(1, MAX_PAGES + 1):
         params = {
@@ -49,6 +50,8 @@ def fetch_onbid(key):
             "pvctTrgtYn": "N",
             "dspsMthodCd": "0001",
         }
+        if region:
+            params["lctnSdnm"] = region
         payload = get_json(API + "?" + urllib.parse.urlencode(params))
         error = payload.get("OpenAPI_ServiceResponse", {}).get("cmmMsgHeader")
         if error:
@@ -130,11 +133,11 @@ def geocode(address, cache):
     return [float(results[0]["lon"]), float(results[0]["lat"])]
 
 
-def main():
+def main(region=None):
     key = os.environ.get("ONBID_SERVICE_KEY", "").strip()
     if not key:
         raise RuntimeError("GitHub Actions Secret ONBID_SERVICE_KEY가 설정되지 않았습니다.")
-    records = normalized_items(fetch_onbid(key))
+    records = normalized_items(fetch_onbid(key, region))
     if not records:
         raise RuntimeError("온비드 API에서 표시 가능한 물건이 없어 기존 지도 데이터를 유지합니다.")
     cache = load_cache()
@@ -197,4 +200,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Build an Onbid auction GeoJSON snapshot")
+    parser.add_argument("--region", help="Filter by province/city name, for example 서울특별시")
+    main(parser.parse_args().region)

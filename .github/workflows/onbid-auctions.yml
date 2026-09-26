@@ -2,6 +2,12 @@ name: Refresh Onbid auction data
 
 on:
   workflow_dispatch:
+    inputs:
+      region:
+        description: 'Optional 시도 filter (e.g. 서울특별시)'
+        required: false
+        type: string
+        default: ''
   schedule:
     - cron: '17 22 * * *' # 07:17 Asia/Seoul
 
@@ -24,7 +30,14 @@ jobs:
       - name: Fetch Onbid data and update map snapshot
         env:
           ONBID_SERVICE_KEY: ${{ secrets.ONBID_SERVICE_KEY }}
-        run: python scripts/update_onbid_auctions.py
+          ONBID_REGION: ${{ inputs.region }}
+        run: |
+          if [[ -n "$ONBID_REGION" ]]; then
+            python scripts/update_onbid_auctions.py --region "$ONBID_REGION"
+          else
+            python scripts/update_onbid_auctions.py
+          fi
+        shell: bash
       - name: Publish changed GeoJSON snapshot
         run: |
           git config user.name "github-actions[bot]"
