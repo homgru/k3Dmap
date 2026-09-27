@@ -107,6 +107,24 @@ def address_of(item):
     return re.sub(r"\s+", " ", value)
 
 
+def parcel_address(item):
+    """Build a clean lot-number address from Onbid's PNU and locality fields."""
+    pnu = str(item.get("ltnoPnu") or "").strip()
+    if not re.fullmatch(r"\d{19}", pnu):
+        return address_of(item), "address"
+    main_number = int(pnu[11:15])
+    sub_number = int(pnu[15:19])
+    if not main_number:
+        return address_of(item), "address"
+    lot_number = ("산" if pnu[10] == "1" else "") + str(main_number)
+    if sub_number:
+        lot_number += f"-{sub_number}"
+    locality = " ".join(str(item.get(field) or "").strip() for field in (
+        "lctnSdnm", "lctnSggnm", "lctnEmdNm"
+    )).strip()
+    return (f"{locality} {lot_number}".strip() if locality else address_of(item)), "parcel"
+
+
 def valid_bid_date(value):
     value = str(value or "")
     if not re.fullmatch(r"\d{12}", value) or value.startswith("2999"):
@@ -131,7 +149,11 @@ def normalized_items(items):
         address = address_of(item)
         if not key or not address:
             continue
-        item = dict(item, _address=address, _start=start, _end=end)
+        geocode_address, geocode_precision = parcel_address(item)
+        item = dict(
+            item, _address=address, _geocodeAddress=geocode_address,
+            _geocodePrecision=geocode_precision, _start=start, _end=end,
+        )
         current = grouped.get(key)
         # Prefer an ongoing bid, then the earliest upcoming round for this asset.
         priority = (0 if str(item.get("pbctStatCd")) == "0002" else 1, start or end)
@@ -186,7 +208,7 @@ def geocode_query(query_text, precision, cache, request_budget):
     return None, 1
 
 
-def geocode(address, cache, request_budget):
+def geocode(address, cache, request_budget, precision="address"):
     full = re.sub(r"\s+", " ", address).strip()
     simplified = re.sub(r"\s+\d+(?:-\d+)?\s*(?:동|층|호)\b.*$", "", full)
     simplified = re.sub(
@@ -198,9 +220,7 @@ def geocode(address, cache, request_budget):
             queries.append(query_text)
     requests_made = 0
     for query_text in queries:
-        result, used = geocode_query(
-            query_text, "address", cache, request_budget - requests_made
-        )
+        result, used = geocode_query(query_text, precision, cache, request_budget - requests_made)
         requests_made += used
         if result:
             return result, requests_made
@@ -241,12 +261,19 @@ def main(region=None):
     for item in records:
         address = item["_address"]
         cached = cache.get(address)
+        previous_approximation = None
         if isinstance(cached, list):
             coords = cached
             precision = "address"
         elif isinstance(cached, dict) and isinstance(cached.get("coordinates"), list):
-            coords = cached["coordinates"]
-            precision = cached.get("precision", "address")
+            cached_precision = cached.get("precision", "address")
+            if cached_precision in ("address", "parcel"):
+                coords = cached["coordinates"]
+                precision = cached_precision
+            else:
+                coords = None
+                precision = "unknown"
+                previous_approximation = cached
         elif isinstance(cached, dict) and cached.get("retryAfter", "") > today:
             coords = []
             precision = "unknown"
@@ -254,11 +281,12 @@ def main(region=None):
             coords = None
             precision = "unknown"
         if not coords:
-            address_retrying = isinstance(cached, dict) and cached.get("retryAfter", "") > today
             result = None
-            if coords is None and not address_retrying:
-                result, used = geocode(address, cache, MAX_NEW_GEOCODES - new_geocodes)
-                new_geocodes += used
+            result, used = geocode(
+                item["_geocodeAddress"], cache, MAX_NEW_GEOCODES - new_geocodes,
+                item["_geocodePrecision"],
+            )
+            new_geocodes += used
             if not result:
                 result, used = geocode_area(item, cache, MAX_NEW_GEOCODES - new_geocodes)
                 new_geocodes += used
@@ -266,6 +294,9 @@ def main(region=None):
                 cache[address] = result
                 coords = result["coordinates"]
                 precision = result["precision"]
+            elif previous_approximation:
+                coords = previous_approximation["coordinates"]
+                precision = previous_approximation.get("precision", "district")
             else:
                 cache[address] = {
                     "retryAfter": (dt.date.fromisoformat(today) + dt.timedelta(days=30)).isoformat()
@@ -307,7 +338,7 @@ def main(region=None):
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(json.dumps({"type": "FeatureCollection", "metadata": {"source": "한국자산관리공사 온비드", "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "itemCount": len(features), "apiRowsRead": len(records)}, "features": features}, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
     CACHE.write_text(json.dumps(cache, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
-    precise = sum(1 for feature in features if feature["properties"]["locationPrecision"] == "address")
+    precise = sum(1 for feature in features if feature["properties"]["locationPrecision"] in ("address", "parcel"))
     neighborhood = sum(1 for feature in features if feature["properties"]["locationPrecision"] == "neighborhood")
     district = sum(1 for feature in features if feature["properties"]["locationPrecision"] == "district")
     print(
