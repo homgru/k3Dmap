@@ -4,6 +4,9 @@
   const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let all={type:'FeatureCollection',features:[]};
   let map;
+  let visibleFeatures=[];
+  let highlightFrame=0;
+  let lastHighlightData='';
 
   function filter(){
     const type=$('auction-type').value;
@@ -11,7 +14,44 @@
     const failed=+$('auction-failed').value;
     const features=all.features.filter(f=>(type==='all'||f.properties.type===type)&&f.properties.discountRate>=discount&&f.properties.failedCount>=failed);
     map.getSource('auctions').setData({type:'FeatureCollection',features});
+    visibleFeatures=features;
     $('auction-count').textContent=features.length+'건 표시';
+    scheduleBuildingHighlights();
+  }
+
+  // Use only address or parcel precision points, never neighborhood/district fallbacks.
+  function scheduleBuildingHighlights(){
+    if(highlightFrame)cancelAnimationFrame(highlightFrame);
+    highlightFrame=requestAnimationFrame(()=>{highlightFrame=0;updateBuildingHighlights()});
+  }
+  function updateBuildingHighlights(){
+    const source=map.getSource('auction-buildings');
+    if(!source||!map.isStyleLoaded())return;
+    const enabled=$('auctions').checked&&$('buildings').checked&&map.getZoom()>=14;
+    const bounds=map.getBounds();
+    const features=[];
+    const seen=new Set();
+    if(enabled){
+      for(const auction of visibleFeatures){
+        const precision=auction.properties.locationPrecision;
+        if(precision!=='parcel'&&precision!=='address')continue;
+        if(auction.geometry?.type!=='Point'||!Array.isArray(auction.geometry.coordinates))continue;
+        const [lng,lat]=auction.geometry.coordinates;
+        if(!Number.isFinite(lng)||!Number.isFinite(lat)||!bounds.contains([lng,lat]))continue;
+        const point=map.project([lng,lat]);
+        const building=map.queryRenderedFeatures(point,{layers:['building-3d']}).find(f=>f.geometry&&['Polygon','MultiPolygon'].includes(f.geometry.type));
+        if(!building)continue;
+        const key=JSON.stringify(building.geometry.coordinates);
+        if(seen.has(key))continue;
+        seen.add(key);
+        features.push({type:'Feature',geometry:building.geometry,properties:{render_height:building.properties?.render_height??6,render_min_height:building.properties?.render_min_height??0}});
+      }
+    }
+    const data={type:'FeatureCollection',features};
+    const fingerprint=JSON.stringify(data);
+    if(fingerprint===lastHighlightData)return;
+    lastHighlightData=fingerprint;
+    source.setData(data);
   }
 
   function popup(feature,coordinates){
@@ -26,6 +66,11 @@
   }
 
   function addLayers(){
+    map.addSource('auction-buildings',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    const styleLayers=map.getStyle().layers;
+    const buildingIndex=styleLayers.findIndex(layer=>layer.id==='building-3d');
+    const beforeId=buildingIndex>=0?styleLayers[buildingIndex+1]?.id:undefined;
+    map.addLayer({id:'auction-building-highlight',type:'fill-extrusion',source:'auction-buildings',paint:{'fill-extrusion-color':'#e52b2b','fill-extrusion-height':['+',['coalesce',['get','render_height'],6],0.35],'fill-extrusion-base':['coalesce',['get','render_min_height'],0],'fill-extrusion-opacity':1}},beforeId);
     map.addSource('auctions',{type:'geojson',data:all,cluster:true,clusterMaxZoom:14,clusterRadius:52});
     map.addLayer({id:'auction-clusters',type:'circle',source:'auctions',filter:['has','point_count'],paint:{'circle-color':['step',['get','point_count'],'#f6ad55',10,'#ed8936',30,'#c05621'],'circle-radius':['step',['get','point_count'],20,10,25,30,31],'circle-stroke-color':'#fff','circle-stroke-width':2}});
     map.addLayer({id:'auction-cluster-count',type:'symbol',source:'auctions',filter:['has','point_count'],layout:{'text-field':['concat','공매 ',['get','point_count_abbreviated']],'text-size':12,'text-font':['Noto Sans Regular']},paint:{'text-color':'#2d1b0b'}});
@@ -46,13 +91,17 @@
     addLayers();
     ['auction-type','auction-discount','auction-failed'].forEach(id=>$(id).addEventListener('change',filter));
     $('auctions').addEventListener('change',()=>setVisible($('auctions').checked));
+    map.on('idle',scheduleBuildingHighlights);
+    map.on('moveend',scheduleBuildingHighlights);
     filter();
     setVisible($('auctions').checked);
   }
   function setVisible(on){
     if(!map?.getLayer('auction-points'))return;
+    map.setLayoutProperty('auction-building-highlight','visibility',on?'visible':'none');
     ['auction-clusters','auction-cluster-count','auction-points','auction-labels'].forEach(id=>map.setLayoutProperty(id,'visibility',on?'visible':'none'));
     $('auction-filters').hidden=!on;
+    scheduleBuildingHighlights();
   }
   window.Auctions={init,setVisible};
 })();
