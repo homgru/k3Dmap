@@ -34,8 +34,9 @@ jobs:
       - name: Fetch Onbid data and update map snapshot
         env:
           ONBID_SERVICE_KEY: ${{ secrets.ONBID_SERVICE_KEY }}
-          ONBID_REGION: ${{ inputs.region || (github.event_name == 'push' && '서울특별시') }}
+          ONBID_REGION: ${{ inputs.region || (github.event_name == 'push' && '서울특별시') || '' }}
         run: |
+          echo "Onbid region: ${ONBID_REGION:-전체}"
           if [[ -n "$ONBID_REGION" ]]; then
             python scripts/update_onbid_auctions.py --region "$ONBID_REGION"
           else

@@ -251,9 +251,18 @@ def main(region=None):
     key = os.environ.get("ONBID_SERVICE_KEY", "").strip()
     if not key:
         raise RuntimeError("GitHub Actions Secret ONBID_SERVICE_KEY가 설정되지 않았습니다.")
-    records = normalized_items(fetch_onbid(key, region))
+    raw_items = fetch_onbid(key, region)
+    records = normalized_items(raw_items)
+    print(
+        f"온비드 조회 지역: {region or '전체'}, API 응답 {len(raw_items)}건, "
+        f"진행 상태·입찰 일정 필터 통과 {len(records)}건",
+        flush=True,
+    )
     if not records:
-        raise RuntimeError("온비드 API에서 표시 가능한 물건이 없어 기존 지도 데이터를 유지합니다.")
+        raise RuntimeError(
+            f"온비드 API 응답 {len(raw_items)}건 중 표시 가능한 물건이 0건입니다. "
+            "기존 지도 데이터를 유지합니다."
+        )
     cache = load_cache()
     features = []
     new_geocodes = 0
