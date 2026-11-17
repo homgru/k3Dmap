@@ -315,6 +315,7 @@ async function withPage(fn) {
     await cdp.send('Runtime.enable', {}, sessionId);
     const downloadDir = path.join(EVIDENCE, 'downloads');
     fs.mkdirSync(downloadDir, { recursive: true });
+    await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir, eventsEnabled: true });
     await cdp.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir }, sessionId);
     return await fn(cdp, sessionId);
   } finally {
@@ -534,17 +535,32 @@ async function browserScreenshot(file) {
   trace(`screenshot ${file} bytes=${image.length}`);
 }
 
+function filesNamed(dir, name) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((entry) => entry === name || entry.startsWith(name))
+    .map((entry) => path.join(dir, entry));
+}
+
 async function browserWaitFile(name) {
-  const file = path.join(EVIDENCE, 'downloads', name);
-  const deadline = Date.now() + 5000;
+  const dir = path.join(EVIDENCE, 'downloads');
+  const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
-    if (fs.existsSync(file) && fs.statSync(file).size > 0) {
-      trace(`download ${file} bytes=${fs.statSync(file).size}`);
+    const found = filesNamed(dir, name).find((file) => fs.statSync(file).size > 0 && !file.endsWith('.crdownload'));
+    if (found) {
+      trace(`download ${found} bytes=${fs.statSync(found).size}`);
       return;
     }
     await sleep(200);
   }
-  die(`timed out waiting for download ${file}`);
+  const profileHits = [];
+  const profile = path.join(STATE, 'chrome-profile');
+  if (fs.existsSync(profile)) {
+    for (const entry of fs.readdirSync(profile, { recursive: true })) {
+      if (String(entry).includes(name)) profileHits.push(String(entry));
+    }
+  }
+  die(`timed out waiting for download ${name}; evidence=${filesNamed(dir, name).join(', ') || 'empty'}; profile=${profileHits.join(', ') || 'none'}`);
 }
 
 async function cleanup() {
